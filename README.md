@@ -17,7 +17,7 @@ This repository consists of ...
 
 # Sampling
 
-<img src="assets/sampling_sdf.mp4" width="320" height="250"/>
+<img src="assets/sampling_sdf.gif">
 
 
 # Requirements 
