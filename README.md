@@ -15,6 +15,8 @@ The source code will be published soon.
 
 This repository consists of ...
 
+<img src="assets/process_sde.png" alt="drawing" width="300"/>
+
 # Sampling
 
 <img src="assets/sampling_sdf.gif">
