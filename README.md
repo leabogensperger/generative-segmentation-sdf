@@ -15,9 +15,13 @@ The source code will be published soon.
 
 This repository consists of ...
 
-<img src="assets/process_sde.png" alt="drawing" width="300"/>
+<img src="assets/process_sde.png" alt="drawing" width="400"/>
 
 # Sampling
+
+The sampling process of the proposed approach is shown using the predictor-corrector sampling algorithm (see Algorithm 1 in the paper). 
+In the top row there are four different condition images and the center row contains the generated/predicted SDF masks. 
+Further, the bottom row displays the corresponding binary masks, which are obtained only indirectly from thresholding the predicted SDF masks. 
 
 <img src="assets/sampling_sdf.gif">
 
