@@ -8,14 +8,33 @@ Lea Bogensperger, Dominik Narnhofer, Filip Ilic, Thomas Pock<br>
 [[Project Page]](https://github.com/leabogensperger/generative-segmentation-sdf)
 [[Paper]](https://arxiv.org/abs/2303.05966)
 
-The source code will be published soon.
 
+Environment Setup:
+```bash
+git clone --recurse-submodules git@github.com:leabogensperger/generative-segmentation-sdf.git
+conda env create -f env.yaml
+conda activate generative_segmentation_sdf
+```
 
 # Score-Based Generative Models for Medical Image Segmentation using Signed Distance Functions
 
-This repository consists of ...
+This repository contains the code to train a generative model that learns the conditional distribution of implicit segmentation masks in the form of signed distance function conditioned on a specific input image. The generate model is set up as a score-based diffusion model with a variance-exploding scheme. 
 
-<img src="assets/process_sde.png" alt="drawing" width="400"/>
+<img src="assets/process_sde.png" alt="drawing" width="420"/>
+
+# Instructions
+
+1) Run by specifying a config file:
+```python 
+python main.py --config "cfg/monuseg.yaml"
+```
+
+2) Sample (set experiment folder in config file):
+```python 
+python sample.py --config "cfg/monuseg.yaml"
+```
+
+Note: the pre-processed data sets will be uploaded later. The data set is specified by the config file. The root directory is set with <data_path> in the config file, which must contain csv files for train and test mode with columns *filename* and *maskname* of all pre-processed patches. Moreover, it must contain the folders *Trainig_patches* and *Test_patches*, which include for each patch a .png file of the input image and a .npy file of the sdf transformed segmentation mask.
 
 # Sampling
 
@@ -25,14 +44,7 @@ Further, the bottom row displays the corresponding binary masks, which are obtai
 
 <img src="assets/sampling_sdf.gif">
 
-
-# Requirements 
-
-todo 
-
-
 # Cite
-change this once the proceedings are out
 
 ```bibtex
 @misc{

@@ -1,0 +1,53 @@
+general:
+  modality: monuseg  
+  corr_mode: diffusion_ls # diffusion on level sets
+  img_cond: 1 # condition on image to obtain segmentation mask
+  data_path: "/home/lea/Data/MonuSeg_spcn_trunc"
+  csv_train: "train.csv"
+  csv_test: "test.csv"
+  batch_size: 2
+  sz: 128 # 128, 256
+  resume_training: False
+  load_path: ''
+  class_label_cond: False 
+  num_classes: 0
+  with_class_label_emb: False
+
+inference:
+  latest: False
+  load_exp: '0000_2023-08-02_13-40-32'
+  n_samples: 4
+
+model:
+  type: 'unet' 
+  n_cin: 1 # 1, n_classes
+  n_cin_cond: 1 # 1, 3 for gray/color valued input
+  n_fm: 10 
+  dim: 128
+  embedding: 'sinusoidal'
+  mults:
+   - 1
+   - 2
+   - 4
+   - 4
+
+learning:
+  epochs: 500000
+  lr: 1.0E-4
+  loss: 2 
+  n_val: 8
+  clip: 40000. 
+  gpus:
+    - 1
+
+SMLD:
+  n_steps: 100
+  sigma_1: 5. 
+  sigma_L: 0.001
+  objective: 'cont'
+  sampler: 'pc'
+  eps: 2.0E-5 # annealed langevin 
+  T: 10 # annealed langevin steps (per noise level)
+  N: 200 # predictor steps
+  M: 1 # corrector steps
+  r: 0.35 
