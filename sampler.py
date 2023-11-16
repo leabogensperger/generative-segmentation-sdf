@@ -128,12 +128,13 @@ def plot_all(x,cond,x_gt,img_cond,load_path,std_min,corr_mode,sample_str=''):
         show_images(x_gt_thresh, save_name=load_path + "/samples/groundtruth_thresholded_overlay.png", vmax=vmax, overlay=cond)
 
 class Sampling:
-    def __init__(self, scorenet, model_type, device, load_path, sz, noise_level_dict, img_cond, corr_mode, save_images=True):
+    def __init__(self, scorenet, model_type, device, load_path, sz, noise_level_dict, beta_dict, sde, img_cond, corr_mode, save_images=True):
         # general params
         self.scorenet = scorenet
         self.device = device
         self.load_path = load_path
         self.sz = sz
+        self.sde = sde
         self.img_cond = img_cond
         self.model_type = model_type
         self.corr_mode = corr_mode
@@ -141,14 +142,67 @@ class Sampling:
         # if set to False, no images are saved
         self.save_images = save_images
 
-        # noise level params
-        self.s1, self.sL, self.L = noise_level_dict['s1'], noise_level_dict['sL'], noise_level_dict['L']
-        self.sigmas = torch.tensor(np.exp(np.linspace(np.log(self.s1),np.log(self.sL), self.L))).type(torch.float32)
+        if self.sde == 've':
+            self.s1, self.sL, self.L = noise_level_dict['s1'], noise_level_dict['sL'], noise_level_dict['L']
+            self.sigmas = torch.tensor(np.exp(np.linspace(np.log(self.s1),np.log(self.sL), self.L))).type(torch.float32)
+        elif self.sde == 'vp':
+            self.beta1, self.betaT, self.T = beta_dict['beta1'], beta_dict['betaT'], beta_dict['T']
+            self.betas = np.linspace(1.E-4, 0.02, 1000, dtype=np.float32)
+            self.alphas = 1 - self.betas
+            self.alpha_bars = torch.from_numpy(np.asarray([np.prod(self.alphas[:i + 1]) for i in range(len(self.alphas))]))
 
     def get_sigma(self,t):
         return self.sigmas[-1]*(self.sigmas[0]/self.sigmas[-1])**t
 
-    def predictor_corrector(self, cond, x_gt, N, M, r, num_classes): 
+    def sample(self, x, m_gt, n_samples, N, M, r, num_classes=2):
+        if self.sde == 've':
+            return self._sample_ve(x, m_gt, n_samples=n_samples, N=N, M=M, r=r,num_classes=num_classes)
+        elif self.sde == 'vp':
+            return self._sample_vp(x, m_gt, n_samples=n_samples,num_classes=num_classes)
+
+    def _sample_vp(self,x, m_gt, n_samples, num_classes):
+        # TODO: sample according to DDPM paper, note up to date this is fixed to 1000 time steps but could be adapted with a continuous loss function
+        """
+        Sample according to DDPM paper
+        """
+        m = torch.randn(n_samples,1,self.sz,self.sz).float().to(self.device)
+        device = x.device
+        m_list = []
+        with torch.no_grad():
+            for i, t in tqdm(enumerate(list(range(self.T))[::-1])):
+                # Estimating noise to be removed
+                time_tensor = (torch.ones(n_samples, 1) * t).to(self.device).long()
+                eta_theta = self.scorenet(m,t*torch.ones((n_samples,1)).to(self.device),img_cond=x)
+                alpha_t = self.alphas[t]
+                alpha_t_bar = self.alpha_bars[t]
+
+                # Partially denoising the image
+                m = (1 / np.sqrt(alpha_t)) * (
+                    m - (1 - alpha_t) / np.sqrt(1 - alpha_t_bar) * eta_theta
+                )
+
+                m_list.append(m.detach().cpu())
+                if t > 0:  # no noise added in last sampling step
+                    z = torch.randn(n_samples, 1, self.sz, self.sz).to(device)
+                    beta_t = self.betas[t]
+                    # # Option 1: sigma_t squared = beta_t
+                    # sigma_t = np.sqrt(beta_t)
+
+                    # Option 2: sigma_t squared = beta_tilda_t
+                    prev_alpha_t_bar = self.alpha_bars[t-1] if t > 0 else self.alphas[0]
+                    beta_tilde_t = ((1 - prev_alpha_t_bar)/(1 - alpha_t_bar)) * beta_t
+                    sigma_t = np.sqrt(beta_tilde_t)
+
+                    # Adding some more noise like in Langevin Dynamics fashion
+                    m = m + sigma_t * z
+        
+        if self.save_images:
+            plot_all(m,x,m_gt,self.img_cond,load_path,std_min=1e-3,corr_mode=self.corr_mode,sample_str='vp')
+
+        # x_list.append(x.detach().cpu())
+        return m, m_list
+
+    def _sample_ve(self, cond, x_gt, n_samples, N, M, r, num_classes): 
         """
         Sample using reverse-time SDE (VE-SDE)
             N number of predictor steps
@@ -246,7 +300,7 @@ class Sampling:
 
         # plotting
         if self.save_images:
-            plot_all(x_list[-1],cond,x_gt,self.img_cond,load_path,std_min=cfg.SMLD.sigma_L,corr_mode=self.corr_mode,sample_str='pc')
+            plot_all(x_list[-1],cond,x_gt,self.img_cond,load_path,std_min=cfg.SMLD.sigma_L,corr_mode=self.corr_mode,sample_str='ve')
 
         return x_list[-1], x_list
 
@@ -303,8 +357,8 @@ if __name__ == "__main__":
     
     # sample and save generated images
     if cfg.general.corr_mode == "diffusion" or cfg.general.corr_mode == "diffusion_ls":
-
-        noise_level_dict={'s1': cfg.SMLD.sigma_1, 'sL': cfg.SMLD.sigma_L, 'L': cfg.SMLD.n_steps}
+        noise_level_dict={'s1': cfg.SMLD.sigma_1_m, 'sL': cfg.SMLD.sigma_L_m, 'L': cfg.SMLD.n_steps}
+        beta_dict = {'beta1': cfg.SMLD.beta_1, 'betaT': cfg.SMLD.beta_T, 'T': cfg.SMLD.T}
 
         Sampler = Sampling(
             scorenet=model,
@@ -313,6 +367,8 @@ if __name__ == "__main__":
             load_path=load_path,
             sz=cfg.general.sz,
             noise_level_dict=noise_level_dict,
+            beta_dict=beta_dict,
+            sde=cfg.SMLD.sde,
             img_cond=cfg.general.img_cond,
             corr_mode=cfg.general.corr_mode,
             save_images=True)
@@ -320,16 +376,12 @@ if __name__ == "__main__":
         # load conditioning image and ground truth
         it_test_dl = iter(test_dl) 
         batch = next(it_test_dl)
-        cond = None if cfg.general.img_cond==0 else batch['mask'].to(device)
-        x_gt = None if cfg.general.img_cond==0 else batch['image'].to(device)
+        x = None if cfg.general.img_cond==0 else batch['mask'].to(device)
+        m_gt = None if cfg.general.img_cond==0 else batch['image'].to(device)
 
-        if cfg.SMLD.sampler == 'pc': # predictor corrector sampling
-            print('\nPredictor-Corrector sampling with N=%i, M=%i, r=%f' %(cfg.SMLD.N,cfg.SMLD.M,cfg.SMLD.r))
-            samples, samples_list = Sampler.predictor_corrector(cond=cond, x_gt=x_gt, N=cfg.SMLD.N,M=cfg.SMLD.M,r=cfg.SMLD.r, num_classes=cfg.model.n_cin)
-
-        else:
-            assert False, 'Specified sampler %s not implemented!' % cfg.SMLD.sampler
+        # generate samples
+        samples, samples_list = Sampler.sample(x, m_gt, n_samples=cfg.inference.n_samples, N=cfg.SMLD.N,M=cfg.SMLD.M,r=cfg.SMLD.r, num_classes=cfg.model.n_cin)
 
         # eval metrics
-        iou, dice = compute_metrics(samples, x_gt.cpu(), corr_mode=cfg.general.corr_mode,thresh=3.*cfg.SMLD.sigma_L,num_classes=cfg.model.n_cin)
+        iou, dice = compute_metrics(samples, m_gt.cpu(), corr_mode=cfg.general.corr_mode,thresh=3.*cfg.SMLD.sigma_L_m,num_classes=cfg.model.n_cin)
         print('\nFinal metrics: IoU [%f], Dice [%f]' %(iou,dice))

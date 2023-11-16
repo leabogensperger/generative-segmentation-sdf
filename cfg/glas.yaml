@@ -41,13 +41,16 @@ learning:
     - 1
 
 SMLD:
-  n_steps: 100
-  sigma_1: 5. 
-  sigma_L: 0.001
+  sde: 'vp' # VE used in GCPR paper, VP scheme is like classic DDPM
+  beta_1: 1.E-4 # default from DDPM
+  beta_T: 0.02 # default from DDPM
+  T: 1000 # default from DDPM
+  n_steps: 100 # VE params
+  sigma_1_m: 5. # VE params: heuristic
+  sigma_L_m: 0.001 # VE params: heuristic
   objective: 'cont'
-  sampler: 'pc'
-  eps: 2.0E-5 # annealed langevin 
-  T: 10 # annealed langevin steps (per noise level)
-  N: 200 # predictor steps
-  M: 1 # corrector steps
-  r: 0.1 
+  sampler: 'pc' # for VE scheme with reverse SDE
+  eps: 2.0E-5 # annealed Langevin 
+  N: 200 # Predictor steps
+  M: 1 # Corrector steps
+  r: 0.15 # "snr" for PC sampling

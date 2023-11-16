@@ -101,9 +101,10 @@ if __name__ == "__main__":
 
         # training
         if (cfg.general.corr_mode == "diffusion" or cfg.general.corr_mode == "diffusion_ls"):
-            noise_level_dict={'s1': cfg.SMLD.sigma_1, 'sL': cfg.SMLD.sigma_L, 'L': cfg.SMLD.n_steps}
+            noise_level_dict={'s1': cfg.SMLD.sigma_1_m, 'sL': cfg.SMLD.sigma_L_m, 'L': cfg.SMLD.n_steps}
+            beta_dict = {'beta1': cfg.SMLD.beta_1, 'betaT': cfg.SMLD.beta_T, 'T': cfg.SMLD.T}
 
-            trainer.TrainScoreNetwork(noise_level_dict,model_type=cfg.model.type,train_objective=cfg.SMLD.objective,loss_power=cfg.learning.loss,n_val=cfg.learning.n_val,val_dl=train_dl).do(
+            trainer.TrainScoreNetwork(noise_level_dict,beta_dict,sde=cfg.SMLD.sde,model_type=cfg.model.type,train_objective=cfg.SMLD.objective,loss_power=cfg.learning.loss,n_val=cfg.learning.n_val,val_dl=train_dl).do(
                 model,
                 train_dl,
                 cfg.learning.epochs,

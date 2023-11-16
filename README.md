@@ -18,7 +18,7 @@ conda activate generative_segmentation_sdf
 
 # Score-Based Generative Models for Medical Image Segmentation using Signed Distance Functions
 
-This repository contains the code to train a generative model that learns the conditional distribution of implicit segmentation masks in the form of signed distance function conditioned on a specific input image. The generate model is set up as a score-based diffusion model with a variance-exploding scheme. 
+This repository contains the code to train a generative model that learns the conditional distribution of implicit segmentation masks in the form of signed distance function conditioned on a specific input image. The generative model is set up as a score-based diffusion model with a variance-exploding scheme -- however, later experiments have shown that the variance-preserving scheme seems numerically a bit more stable for this case, therefore this option is now also included (set the param *sde* in *SMLD* of the config file to either *ve*/*vp*).
 
 <img src="assets/process_sde.png" alt="drawing" width="420"/>
 

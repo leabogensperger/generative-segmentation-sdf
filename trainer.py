@@ -22,31 +22,56 @@ from datasets.transform_factory import inv_normalize, transform_factory
 from models import ddpm
 
 class TrainScoreNetwork:
-    def __init__(self, noise_level_dict, model_type, train_objective, anneal_power=2, loss_power=2, n_val=8, val_dl=None):
-        self.s1, self.sL, self.L = noise_level_dict['s1'], noise_level_dict['sL'], noise_level_dict['L']
-        self.sigmas = torch.tensor(np.exp(np.linspace(np.log(self.s1),np.log(self.sL), self.L))).type(torch.float32)
-        
+    def __init__(self, noise_level_dict, beta_dict, sde, model_type, train_objective, anneal_power=2, loss_power=2, n_val=8, val_dl=None):
+        self.sde = sde 
         self.model_type = model_type
-        self.anneal_power = anneal_power
-        self.loss_power = loss_power
-        self.train_objective = train_objective
-        assert train_objective == 'disc' or train_objective == 'cont'
 
-        if val_dl: # then use test dataloader
-            val_batch = next(iter(val_dl))
-            self.x_val = val_batch['image'][:n_val]
-            self.cond_val = val_batch['mask'][:n_val]
+        if self.sde == 've':
+            self.s1, self.sL, self.L = noise_level_dict['s1'], noise_level_dict['sL'], noise_level_dict['L']
+            self.sigmas = torch.tensor(np.exp(np.linspace(np.log(self.s1),np.log(self.sL), self.L))).type(torch.float32)
+            
+            self.model_type = model_type
+            self.anneal_power = anneal_power
+            self.loss_power = loss_power
+            self.train_objective = train_objective
+            assert train_objective == 'disc' or train_objective == 'cont'
 
-            eta_val = torch.randn_like(self.x_val)
-            self.used_sigmas_val = torch.linspace(self.sigmas[0],self.sigmas[-1], self.x_val.shape[0])[:,None,None,None]
-            self.z_val = self.x_val + eta_val*self.used_sigmas_val
+            if val_dl: # then use test dataloader
+                val_batch = next(iter(val_dl))
+                self.x_val = val_batch['image'][:n_val]
+                self.cond_val = val_batch['mask'][:n_val]
+
+                eta_val = torch.randn_like(self.x_val)
+                self.used_sigmas_val = torch.linspace(self.sigmas[0],self.sigmas[-1], self.x_val.shape[0])[:,None,None,None]
+                self.z_val = self.x_val + eta_val*self.used_sigmas_val
+
+        elif self.sde == 'vp':
+            self.beta1, self.betaT, self.T = beta_dict['beta1'], beta_dict['betaT'], beta_dict['T']
+            self.betas = np.linspace(1.E-4, 0.02, 1000, dtype=np.float32)
+            self.alphas = 1 - self.betas
+            self.alpha_bars = torch.from_numpy(np.asarray([np.prod(self.alphas[:i + 1]) for i in range(len(self.alphas))]))
+
+            if val_dl: # TODO: implement validation 
+                val_batch = next(iter(val_dl))
+                self.x_val = val_batch['image'][:n_val]
+                pass 
+
+        else:
+            raise ValueError('Unknown SDE type!')
 
     def get_grad_norm(self, model):
         parameters = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
         norms = [p.grad.detach().abs().max().item() for p in parameters]
         return np.asarray(norms).max()
 
-    def do(self, scorenet, dl, n_epochs, clip, optim, device, simulation, writer, img_cond=0, class_label_cond=False):
+    def do(self, scorenet, dl, n_epochs, clip, optim, device, simulation, writer, img_cond, class_label_cond=False):
+        if self.sde == 've':
+            self._do_ve(scorenet, dl, n_epochs, clip, optim, device, simulation, writer, img_cond, class_label_cond)
+        
+        elif self.sde == 'vp':
+            self._do_vp(scorenet, dl, n_epochs, clip, optim, device, simulation, writer, img_cond, class_label_cond)
+
+    def _do_ve(self, scorenet, dl, n_epochs, clip, optim, device, simulation, writer, img_cond=0, class_label_cond=False):
         if img_cond == 0:
             self.cond_val = None 
         else:
@@ -161,4 +186,69 @@ class TrainScoreNetwork:
                 simulation.save_pytorch(checkpoint, overwrite=False, epoch='_'+'{0:07}'.format(epoch))
                 log_string += " --> Best model ever (stored)"
 
+            print(log_string)
+
+    def _do_vp(self, scorenet, dl, n_epochs, clip, optim, device, simulation, writer, img_cond, class_label_cond=False):
+        best_loss = float("inf")
+        mse = nn.MSELoss()
+
+        for epoch in tqdm(range(n_epochs), desc=f"Training progress", colour="#00ff00"):
+            epoch_loss = 0.0
+            grad_norms_epoch = []
+
+            for step, batch in enumerate(tqdm(dl, leave=False, desc=f"Epoch {epoch + 1}/{n_epochs}", colour="#005500")):
+                # Loading data
+                m = batch['image'].to(device)
+                m *= 5. # TODO: comment if a clean data loader *without* scaling to [-0.2,0.2] is used - this is to get the mask to [-1,1] like the image
+                x = None if img_cond==0 else batch['mask'].to(device)
+                lbl = None if class_label_cond is False else batch['label'].to(device).unsqueeze(1)
+                n = len(m)
+
+                # noise corruption
+                t = torch.randint(0, self.T, (n,)).to(device)
+                a_bar = self.alpha_bars.to(device)[t]#.to(x.device)
+                eta = torch.randn_like(x).to(device)
+                m_noisy = a_bar.sqrt().reshape(n, 1, 1, 1) * m + (1 - a_bar).sqrt().reshape(n, 1, 1, 1) * eta
+
+                # compute score matching loss
+                if self.model_type == 'unet':
+                    eta_estimated = scorenet(m_noisy, t.reshape(n,-1), img_cond=x, class_lbl=lbl)
+
+                elif self.model_type == 'uvit':
+                    eta_estimated = scorenet(m_noisy, t.reshape(n,-1), img_cond=x)
+
+                elif self.model_type == 'tdv':
+                    raise NotImplementedError
+
+                # Optimizing the MSE between the noise plugged and the predicted noise #
+                loss = mse(eta_estimated, eta)
+                optim.zero_grad()
+                loss.backward()
+
+                if isinstance(clip,float):
+                    torch.nn.utils.clip_grad_norm_(scorenet.parameters(), max_norm=clip, norm_type='inf')
+                grad_norms_epoch.append(self.get_grad_norm(scorenet))
+
+                optim.step()
+                epoch_loss += loss.item() * len(x) / len(dl.dataset)
+                
+            log_string = f"Loss at epoch {epoch + 1}: {epoch_loss:.8f}"
+            if epoch % 10 == 0:
+                writer.add_scalar(f'train/epoch_loss', epoch_loss, epoch)
+                writer.add_scalar(f'train/epoch_max_grad', np.asarray(grad_norms_epoch).max(), epoch)
+                writer.add_scalar(f'train/epoch_mean_grad', np.asarray(grad_norms_epoch).mean(), epoch)
+
+            if best_loss > epoch_loss:
+                best_loss = epoch_loss
+                # save last 3 checkpoints
+                if epoch > 0:
+                    cp_dir = simulation._outdir + '/models'
+                    if len([name for name in os.listdir(cp_dir) if os.path.isfile(os.path.join(cp_dir,name))]) == 3:
+                        fnames = sorted([fname for fname in os.listdir(cp_dir) if fname.endswith('.pt')])
+                        os.remove(os.path.join(cp_dir,fnames[0]))
+                checkpoint = {'epoch': epoch, 
+                            'state_dict': scorenet.state_dict(),
+                            'optimizer': optim.state_dict()}
+                simulation.save_pytorch(checkpoint, overwrite=False, epoch='_'+'{0:07}'.format(epoch))
+                log_string += " --> Best model ever (stored)"
             print(log_string)
